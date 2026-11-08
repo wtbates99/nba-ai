@@ -5,10 +5,15 @@ description = "Learn to train models on NBA data: MLP vs transformer predicting 
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "lightgbm>=4.7.0",
     "matplotlib>=3.9",
     "nba_api>=1.10",
     "numpy>=2.0",
     "pandas>=2.2",
+    "pyarrow>=26.0.1",
+    "requests>=2.34.2",
+    "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
     "torch>=2.5",
 ]
 
@@ -16,6 +21,7 @@ dependencies = [
 dev = [
     "mypy>=1.13",
     "pandas-stubs>=2.2",
+    "pytest>=9.2.0",
 ]
 
 [tool.uv.sources]
