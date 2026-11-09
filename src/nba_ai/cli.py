@@ -39,6 +39,15 @@ def build_table(future: pd.DataFrame | None = None) -> pd.DataFrame:
     return features.build(games, teams, players, injuries=status)
 
 
+# day before = previous day's 5 PM injury report; pre-game = last game-day report before tip;
+# at tip-off = which rotation players are actually active (inactive lists come out ~30 min before tip)
+VARIANTS = {
+    "daybefore": models.feature_set(False, False, "dayb"),
+    "pregame": models.feature_set(False, False, "pre"),
+    "tipoff": models.feature_set(True, False, "pre"),
+}
+
+
 def cmd_train(_: argparse.Namespace) -> None:
     """Fit on everything before the test season, score the untouched test season once."""
     df = build_table()
@@ -49,14 +58,14 @@ def cmd_train(_: argparse.Namespace) -> None:
     y = test.home_win.to_numpy()
     out = test[["GAME_ID", "GAME_DATE", "home_abbr", "away_abbr", "home_win", "margin",
                 "elo_prob", "mkt_prob", "mkt_spread"]].copy()
-    for variant, tip in (("daybefore", False), ("tipoff", True)):
-        cols = models.feature_set(tip, False)
+    for variant, cols in VARIANTS.items():
         out[f"p_{variant}"] = models.final_predict(train, test, cols)
     out["p_market"] = models.market_prob(train, test)
+    out["has_report"] = test.home_i_has_pre.to_numpy()
     out.to_parquet(PRED)
 
     rows = {"elo": out.elo_prob.to_numpy(), "model, day before": out.p_daybefore.to_numpy(),
-            "model, at tip-off": out.p_tipoff.to_numpy()}
+            "model, pre-game": out.p_pregame.to_numpy(), "model, at tip-off": out.p_tipoff.to_numpy()}
     print(f"\nTEST {evaluate.TEST_SEASON}: {len(test)} games")
     for name, p in rows.items():
         m = evaluate.metrics(y, p)
@@ -93,13 +102,16 @@ def cmd_predict(args: argparse.Namespace) -> None:
             "GAME_ID": [f"F{g['espn_id']}" for g in sched],
         }
     )
+    injuries.download([day])  # today's and yesterday's official injury reports, if published yet
+    injuries.parse_all()
     df = build_table(fut)
     played = df[df.home_win.notna()]
     upcoming = df[df.GAME_ID.isin(fut.GAME_ID)].copy()
-    cols = models.feature_set(False, False)
-    upcoming["p"] = models.final_predict(played, upcoming, cols)
+    snap = "pre" if upcoming.home_i_has_pre.max() > 0 else "dayb"
+    upcoming["p"] = models.final_predict(played, upcoming, VARIANTS["pregame" if snap == "pre" else "daybefore"])
     lines = {g["espn_id"]: espn.odds(g["espn_id"]) for g in sched}
-    print(f"\n{day}  (model = day-before: no lineup info)\n")
+    which = "latest game-day injury report" if snap == "pre" else "previous day's injury report"
+    print(f"\n{day}  (model uses the {which})\n")
     for _, r in upcoming.iterrows():
         fav, p = (r.home_abbr, r.p) if r.p >= 0.5 else (r.away_abbr, 1 - r.p)
         mk = lines[r.GAME_ID[1:]].get("mkt_prob")

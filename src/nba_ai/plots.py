@@ -15,7 +15,8 @@ from .evaluate import TEST_SEASON, metrics
 INK, INK2, MUTED = "#0b0b0b", "#52514e", "#898781"
 GRID, AXIS, SURFACE = "#e1e0d9", "#c3c2b7", "#fcfcfb"
 # categorical slots in fixed order (validated reference palette): blue, orange, aqua, yellow
-COLOR = {"model, day before": "#2a78d6", "model, at tip-off": "#eb6834", "Elo": "#1baf7a", "market": "#eda100"}
+COLOR = {"model, day before": "#2a78d6", "model, at tip-off": "#eb6834", "Elo": "#1baf7a", "market": "#eda100",
+         "model, pre-game": "#6250d6"}
 
 
 def _style(ax: Axes, title: str, subtitle: str) -> None:
@@ -54,7 +55,7 @@ def _dots(ax: Axes, y: np.ndarray, probs: dict[str, np.ndarray], title: str, sub
 def report(pred: pd.DataFrame, out: str) -> None:
     y = pred.home_win.to_numpy()
     allp = {"Elo": pred.elo_prob.to_numpy(), "model, day before": pred.p_daybefore.to_numpy(),
-            "model, at tip-off": pred.p_tipoff.to_numpy()}
+            "model, pre-game": pred.p_pregame.to_numpy(), "model, at tip-off": pred.p_tipoff.to_numpy()}
     has = pred.p_market.notna().to_numpy()
     mk = {k: v[has] for k, v in allp.items()} | {"market": pred.p_market.to_numpy()[has]}
 
@@ -65,7 +66,7 @@ def report(pred: pd.DataFrame, out: str) -> None:
 
     ax = axes[2]
     edges = np.linspace(0, 1, 11)
-    for name in ("model, day before", "model, at tip-off"):
+    for name in ("model, day before", "model, pre-game", "model, at tip-off"):
         p = allp[name]
         b = np.clip(np.digitize(p, edges) - 1, 0, 9)
         xs = [p[b == i].mean() for i in range(10) if (b == i).sum() >= 15]
@@ -79,13 +80,14 @@ def report(pred: pd.DataFrame, out: str) -> None:
     ax.set_ylabel("actual home win rate")
     _style(ax, "Are the probabilities honest?", "Binned predictions vs outcomes; dashed = perfect calibration")
     ax.legend(handles=[Line2D([], [], color=COLOR[n], lw=2, marker="o", label=n)
-                       for n in ("model, day before", "model, at tip-off")],
+                       for n in ("model, day before", "model, pre-game", "model, at tip-off")],
               frameon=False, fontsize=9, labelcolor=INK2, loc="upper left")
 
     fig.suptitle(f"Who wins? NBA game predictions, {TEST_SEASON} test season", x=0.01, y=0.99,
                  ha="left", fontsize=15, fontweight="bold", color=INK)
-    fig.text(0.01, 0.01, "Day before = no lineup info. At tip-off = knows which rotation players are available. "
-             "Data: stats.nba.com box scores, ESPN odds.", fontsize=9, color=INK2)
+    fig.text(0.01, 0.01, "Day before = previous evening's official injury report. Pre-game = last report before tip. "
+             "At tip-off = which rotation players are active. Data: stats.nba.com, NBA injury reports, ESPN odds.",
+             fontsize=9, color=INK2)
     fig.tight_layout(rect=(0, 0.03, 1, 0.95))
     fig.savefig(out, facecolor=SURFACE)
     plt.close(fig)

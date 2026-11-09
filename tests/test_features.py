@@ -58,3 +58,23 @@ def test_garbage_time_players_do_not_change_tipoff_features(logs: tuple[pd.DataF
     key = (target.GAME_ID, int(extra.TEAM_ID.iloc[0]))
     tip_cols = ["r_tip", "r_top3_out", "r_tip_pm", "a_tip", "r_tip_missing", "a_tip_missing"]
     pd.testing.assert_series_equal(base.loc[key, tip_cols], more.loc[key, tip_cols])
+
+
+def test_injury_snapshots_are_strictly_pregame() -> None:
+    """A report published after tip (or on the wrong day) must never feed a game's features."""
+    from nba_ai import injuries
+
+    games = pd.DataFrame({"GAME_ID": ["g1"], "GAME_DATE": [pd.Timestamp("2024-01-10")],
+                          "home_id": [1610612738], "away_id": [1610612747]})
+    players = pd.DataFrame({"PLAYER_ID": [1, 2, 3], "PLAYER_NAME": ["Al Early", "Bo Late", "Cy Prev"],
+                            "TEAM_ID": [1610612738] * 3})
+    row = {"game_date": "01/10/2024", "game_time": "07:30 (ET)", "matchup": "LAL@BOS", "team": "Boston Celtics"}
+    inj = pd.DataFrame([
+        {**row, "player": "Early, Al", "status": "Out", "report_day": "2024-01-10", "report_hour": 13},
+        {**row, "player": "Late, Bo", "status": "Out", "report_day": "2024-01-10", "report_hour": 20},  # after tip
+        {**row, "player": "Prev, Cy", "status": "Questionable", "report_day": "2024-01-09", "report_hour": 17},
+    ])
+    st = injuries.statuses(inj, games, players).set_index("PLAYER_ID")
+    assert st.loc[1, "status_pre"] == "Out"
+    assert 2 not in st.index  # the 8 PM report came after a 7:30 PM tip
+    assert st.loc[3, "status_dayb"] == "Questionable" and pd.isna(st.loc[3, "status_pre"])
