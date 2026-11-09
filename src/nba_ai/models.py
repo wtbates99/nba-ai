@@ -38,7 +38,7 @@ def logistic(train: pd.DataFrame, cols: list[str], C: float = 0.05) -> object:
     X = train[cols].fillna(train[cols].median())
     model = make_pipeline(StandardScaler(), LogisticRegression(C=C, max_iter=2000))
     model.fit(X, train.home_win)
-    model.medians_ = train[cols].median()  # type: ignore[attr-defined]
+    model.medians_ = train[cols].median()
     return model
 
 
@@ -79,3 +79,94 @@ def fit_sigma(pred_margin: F64, y: F64) -> float:
         if ll < best_ll:
             best, best_ll = float(s), ll
     return best
+
+
+def mlp(train: pd.DataFrame, stop: pd.DataFrame, pred: pd.DataFrame, cols: list[str],
+        seeds: int = 5, hidden: int = 64, dropout: float = 0.3, wd: float = 1e-2, lr: float = 1e-3) -> F64:
+    """Small PyTorch MLP (the same training loop as nba_train.py), early-stopped on `stop`,
+    averaged over seeds in logit space. Returns P(home win) for `pred`."""
+    import torch
+    from torch import nn
+
+    med = train[cols].median()
+    mu, sd = train[cols].fillna(med).mean(), train[cols].fillna(med).std() + 1e-9
+
+    def tens(d: pd.DataFrame) -> torch.Tensor:
+        return torch.tensor(((d[cols].fillna(med) - mu) / sd).to_numpy(np.float32))
+
+    Xtr, Xst, Xpr = tens(train), tens(stop), tens(pred)
+    ytr = torch.tensor(train.home_win.to_numpy(np.float32))
+    yst = torch.tensor(stop.home_win.to_numpy(np.float32))
+    logits = []
+    for seed in range(seeds):
+        torch.manual_seed(seed)
+        net = nn.Sequential(nn.Linear(len(cols), hidden), nn.GELU(), nn.Dropout(dropout),
+                            nn.Linear(hidden, hidden), nn.GELU(), nn.Dropout(dropout), nn.Linear(hidden, 1))
+        opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=wd)
+        best, best_state, bad = np.inf, None, 0
+        for _epoch in range(200):
+            net.train()
+            perm = torch.randperm(len(ytr))
+            for i in range(0, len(ytr), 512):
+                idx = perm[i : i + 512]
+                loss = nn.functional.binary_cross_entropy_with_logits(net(Xtr[idx]).squeeze(1), ytr[idx])
+                opt.zero_grad()
+                loss.backward()  # type: ignore[no-untyped-call]
+                opt.step()
+            net.eval()
+            with torch.no_grad():
+                vl = float(nn.functional.binary_cross_entropy_with_logits(net(Xst).squeeze(1), yst))
+            if vl < best - 1e-5:
+                best, best_state, bad = vl, {k: v.clone() for k, v in net.state_dict().items()}, 0
+            else:
+                bad += 1
+                if bad >= 8:
+                    break
+        assert best_state is not None
+        net.load_state_dict(best_state)
+        net.eval()
+        with torch.no_grad():
+            logits.append(net(Xpr).squeeze(1).numpy())
+    out: F64 = 1.0 / (1.0 + np.exp(-np.mean(logits, axis=0)))
+    return out
+
+
+def gbm_margin_predict(train: pd.DataFrame, pred: pd.DataFrame, cols: list[str]) -> F64:
+    """LightGBM on point margin -> P(win) = Phi(margin / sigma). Rounds and sigma come from holding
+    out the last training season; then refit on everything."""
+    params: dict[str, object] = {"num_leaves": 7, "min_data_in_leaf": 400, "learning_rate": 0.01}
+    last = train.SEASON.max()
+    inner, stop = train[train.SEASON < last], train[train.SEASON == last]
+    b = gbm(inner, stop, cols, "regression", params)
+    sigma = fit_sigma(np.asarray(b.predict(stop[cols]), dtype=float), stop.home_win.to_numpy())
+    full = lgb.train({**GBM_PARAMS, **params, "objective": "regression"},
+                     lgb.Dataset(train[cols], train.margin), num_boost_round=int(b.best_iteration * 1.05))
+    return margin_to_prob(np.asarray(full.predict(pred[cols]), dtype=float), sigma)
+
+
+def final_predict(train: pd.DataFrame, pred: pd.DataFrame, cols: list[str]) -> F64:
+    """The production model, chosen by walk-forward CV (see results.csv): an equal-weight
+    logit-space average of logistic regression, the MLP and the margin GBM."""
+    last = train.SEASON.max()
+    parts = [
+        predict_logistic(logistic(train, cols, C=0.003), pred, cols),
+        mlp(train[train.SEASON < last], train[train.SEASON == last], pred, cols),
+        gbm_margin_predict(train, pred, cols),
+    ]
+    z = np.mean([np.log(np.clip(p, 1e-6, 1 - 1e-6) / (1 - np.clip(p, 1e-6, 1 - 1e-6))) for p in parts], axis=0)
+    out: F64 = 1.0 / (1.0 + np.exp(-z))
+    return out
+
+
+def market_prob(train: pd.DataFrame, pred: pd.DataFrame) -> F64:
+    """Market-implied P(home win): vig-free moneyline where available, else spread mapped through a
+    logistic fit on training games. NaN when ESPN has no line."""
+    tr = train[train.mkt_spread.notna()]
+    out = np.full(len(pred), np.nan)
+    has = pred.mkt_spread.notna().to_numpy()
+    if len(tr) and has.any():
+        lr = LogisticRegression(C=10).fit(tr[["mkt_spread"]], tr.home_win)
+        out[has] = lr.predict_proba(pred.loc[has, ["mkt_spread"]])[:, 1]
+    ml = pred.mkt_prob.to_numpy(dtype=float)
+    out = np.where(~np.isnan(ml), ml, out)
+    return out

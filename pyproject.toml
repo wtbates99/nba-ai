@@ -1,7 +1,7 @@
 [project]
 name = "nba-ai"
 version = "0.1.0"
-description = "Learn to train models on NBA data: MLP vs transformer predicting next-game points"
+description = "Predict NBA game winners from box scores, player ratings and schedule"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
@@ -16,6 +16,19 @@ dependencies = [
     "scipy>=1.18.1",
     "torch>=2.5",
 ]
+
+[project.scripts]
+nba-ai = "nba_ai.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nba_ai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
@@ -33,5 +46,5 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [[tool.mypy.overrides]]
-module = ["nba_api.*"]
+module = ["nba_api.*", "scipy.*", "sklearn.*"]
 ignore_missing_imports = true

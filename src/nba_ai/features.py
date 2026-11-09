@@ -154,7 +154,7 @@ def team_features(tl: pd.DataFrame) -> pd.DataFrame:
 
 # ------------------------------------------------------------------ roster strength
 def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0,
-                    apm_lam: float = 30.0, apm_hl_days: float = 400.0, apm_window_days: float = 1100.0,
+                    apm_lam: float = 10.0, apm_hl_days: float = 400.0, apm_window_days: float = 1100.0,
                     refit_days: int = 7) -> pd.DataFrame:
     """Lineup strength from player history, walk-forward.
 
@@ -182,6 +182,7 @@ def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0
     apm: dict[int, float] = {}
     past: list[ratings.ApmGame] = []
     ROOKIE_GS, ROOKIE_MIN, ROOKIE_APM = 3.0, 12.0, -2.0
+    ROT_MIN = 12.0
     next_refit = -1e9
 
     def v(pid: int) -> float:
@@ -201,7 +202,7 @@ def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0
 
     feats: dict[tuple[str, int], tuple[float, ...]] = {}
     for date, day in games.groupby("GAME_DATE", sort=True):
-        dnum = float(pd.Timestamp(date).toordinal())
+        dnum = float(pd.Timestamp(str(date)).toordinal())
         if dnum >= next_refit:
             prior = {pid: box_prior(pid) for pid in val}
             apm = ratings.fit_apm(past, dnum, apm_hl_days, apm_window_days, apm_lam, prior)
@@ -224,9 +225,11 @@ def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0
                 a_stale = team_apm({pid: mins.get(pid, ROOKIE_MIN) for pid in stale_set})
                 played = by_game.get((gid, tid))
                 if played:
-                    ids = {x[0] for x in played}
+                    # Only ROTATION players (pre-game EWMA minutes >= ROT_MIN) count as "known at tip-off".
+                    # Who else got in is post-game info: blowouts empty the bench, which leaks the margin.
+                    ids = {x[0] for x in played if mins.get(x[0], 0.0) >= ROT_MIN}
                     tip = sum(v(pid) for pid in ids)
-                    top3_out = sum(1 for pid in top3 if pid not in ids)
+                    top3_out = float(sum(1 for pid in top3 if pid not in ids))
                     tip_pm = sum(pmv.get(pid, 0.0) for pid in ids)
                     a_tip = team_apm({pid: mins.get(pid, ROOKIE_MIN) for pid in ids})
                     for pid, gsv, mn, pm in played:

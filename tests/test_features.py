@@ -42,3 +42,19 @@ def test_elo_is_zero_sum_and_pregame() -> None:
     assert e.elo_home.iloc[0] == e.elo_away.iloc[0] == 1500.0  # first game sees no result
     assert np.isclose(e.elo_home.iloc[1] + e.elo_away.iloc[1], 3000.0)  # zero-sum update
     assert e.elo_away.iloc[1] > 1500.0  # team 1 won game 0, so it is rated higher going into game 1
+
+
+def test_garbage_time_players_do_not_change_tipoff_features(logs: tuple[pd.DataFrame, pd.DataFrame]) -> None:
+    """Who checks in late in a blowout is decided by the score. Adding a deep-bench player with no
+    rotation history to a game's box must not move any tip-off feature for that game."""
+    teams, players = logs
+    games = features.build_games(teams)
+    target = games[games.GAME_DATE > CUTOFF].iloc[0]
+    extra = players[players.GAME_ID == target.GAME_ID].iloc[[0]].copy()
+    extra["PLAYER_ID"] = 999_999_999  # never seen before -> no rotation minutes
+    extra["MIN"] = 3
+    base = features.roster_features(games, players).set_index(["GAME_ID", "team_id"])
+    more = features.roster_features(games, pd.concat([players, extra])).set_index(["GAME_ID", "team_id"])
+    key = (target.GAME_ID, int(extra.TEAM_ID.iloc[0]))
+    tip_cols = ["r_tip", "r_top3_out", "r_tip_pm", "a_tip", "r_tip_missing", "a_tip_missing"]
+    pd.testing.assert_series_equal(base.loc[key, tip_cols], more.loc[key, tip_cols])

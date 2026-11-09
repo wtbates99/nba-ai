@@ -141,3 +141,4 @@ def fit_apm(past: list[ApmGame], today: float, halflife_days: float, window_days
     b = Xw.T @ resid
     beta = p0 + np.linalg.solve(A, b)
     return {pid: float(beta[col[pid]]) for pid in pids}
+
