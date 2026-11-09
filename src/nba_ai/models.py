@@ -25,8 +25,16 @@ ROSTER_TIP = ["home_r_tip", "away_r_tip", "d_r_tip", "home_r_tip_missing", "away
 MARKET = ["mkt_spread", "mkt_prob", "mkt_total"]
 
 
-def feature_set(tipoff: bool, market: bool) -> list[str]:
+def injury_cols(snap: str) -> list[str]:
+    """Official injury report features for snapshot 'dayb' (previous day 5 PM) or 'pre' (game day)."""
+    return [f"home_i_{snap}", f"away_i_{snap}", f"d_i_{snap}", f"home_il_{snap}", f"away_il_{snap}",
+            f"d_il_{snap}", f"home_i_has_{snap}"]
+
+
+def feature_set(tipoff: bool, market: bool, injury: str | None = None) -> list[str]:
     cols = RATING + FORM + SEASON + SCHED + ROSTER_DAYB
+    if injury:
+        cols += injury_cols(injury)
     if tipoff:
         cols += ROSTER_TIP
     if market:

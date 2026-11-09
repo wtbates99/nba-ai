@@ -153,7 +153,12 @@ def team_features(tl: pd.DataFrame) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------ roster strength
+# P(player appears | status on the official injury report), measured on 2018-19..2023-24 (see README)
+P_PLAY = {"Out": 0.01, "Doubtful": 0.05, "Questionable": 0.49, "Probable": 0.88, "Available": 0.9}
+
+
 def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0,
+                    injuries: pd.DataFrame | None = None,
                     apm_lam: float = 10.0, apm_hl_days: float = 400.0, apm_window_days: float = 1100.0,
                     refit_days: int = 7) -> pd.DataFrame:
     """Lineup strength from player history, walk-forward.
@@ -200,6 +205,30 @@ def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0
             return np.nan
         return sum(apm.get(pid, box_prior(pid)) * w for pid, w in weights.items()) * (240.0 / tot) / 48.0
 
+    # official injury report snapshots: (GAME_ID, team) -> {player: status}, plus covered game dates
+    inj: dict[str, dict[tuple[str, int], dict[int, str]]] = {"dayb": {}, "pre": {}}
+    covered: dict[str, set[object]] = {"dayb": set(), "pre": set()}
+    if injuries is not None and len(injuries):
+        gdate = dict(zip(games.GAME_ID, games.GAME_DATE, strict=True))
+        for snap in ("dayb", "pre"):
+            sub = injuries[injuries[f"status_{snap}"].notna()]
+            for gid, tid, pid, stt in sub[["GAME_ID", "team_id", "PLAYER_ID", f"status_{snap}"]].itertuples(index=False):
+                inj[snap].setdefault((gid, int(tid)), {})[int(pid)] = stt
+                covered[snap].add(gdate.get(gid))
+
+    def injury_apm(snap: str, gid: str, tid: int, date: object, regs: dict[int, float]) -> tuple[float, float]:
+        """Expected strength given the report (unlisted regulars assumed healthy) and value lost."""
+        if date not in covered[snap]:
+            return np.nan, np.nan
+        listed = inj[snap].get((gid, tid), {})
+        # same population as the tip-off feature: rotation players only, so i_pre estimates a_tip
+        pool = {pid for pid in set(regs) | set(listed)
+                if last_team.get(pid) == tid and mins.get(pid, 0.0) >= ROT_MIN}
+        w = {pid: mins.get(pid, ROOKIE_MIN) * P_PLAY.get(listed.get(pid, "Available"), 1.0) for pid in pool}
+        lost = sum(v(pid) * (1 - P_PLAY.get(st, 1.0)) for pid, st in listed.items()
+                   if mins.get(pid, 0.0) >= ROT_MIN and last_team.get(pid) == tid)
+        return team_apm(w), lost
+
     feats: dict[tuple[str, int], tuple[float, ...]] = {}
     for date, day in games.groupby("GAME_DATE", sort=True):
         dnum = float(pd.Timestamp(str(date)).toordinal())
@@ -237,7 +266,10 @@ def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0
                     sides.append([(pid, mn) for pid, _, mn, _ in played])
                 else:
                     tip = top3_out = tip_pm = a_tip = np.nan
-                feats[(gid, tid)] = (usual, stale, tip, top3_out, tip_pm, len(hist), a_usual, a_stale, a_tip)
+                i_dayb, l_dayb = injury_apm("dayb", gid, tid, date, regs)
+                i_pre, l_pre = injury_apm("pre", gid, tid, date, regs)
+                feats[(gid, tid)] = (usual, stale, tip, top3_out, tip_pm, len(hist), a_usual, a_stale, a_tip,
+                                     i_dayb, l_dayb, i_pre, l_pre)
                 if played:
                     recent[tid].append(frozenset(x[0] for x in played))
             if len(sides) == 2 and not np.isnan(margin):
@@ -250,7 +282,12 @@ def roster_features(games: pd.DataFrame, players: pd.DataFrame, hl: float = 15.0
     idx = pd.MultiIndex.from_tuples(list(feats.keys()), names=["GAME_ID", "team_id"])
     df = pd.DataFrame(list(feats.values()), index=idx,
                       columns=["r_usual", "r_stale", "r_tip", "r_top3_out", "r_tip_pm", "r_hist",
-                               "a_usual", "a_stale", "a_tip"])
+                               "a_usual", "a_stale", "a_tip", "i_dayb", "il_dayb", "i_pre", "il_pre"])
+    # no report (before 2018-19): fall back to the usual rotation, so the column means the same thing
+    for snap in ("dayb", "pre"):
+        df[f"i_has_{snap}"] = df[f"i_{snap}"].notna().astype(float)
+        df[f"i_{snap}"] = df[f"i_{snap}"].fillna(df.a_usual)
+        df[f"il_{snap}"] = df[f"il_{snap}"].fillna(0.0)
     df["r_stale_missing"] = df.r_usual - df.r_stale
     df["r_tip_missing"] = df.r_usual - df.r_tip
     df["a_tip_missing"] = df.a_usual - df.a_tip
@@ -275,10 +312,10 @@ def load_market(data_dir: Path = Path("data")) -> pd.DataFrame:
 
 # ------------------------------------------------------------------ assemble
 def build(games: pd.DataFrame, teams: pd.DataFrame, players: pd.DataFrame,
-          elo_params: ratings.EloParams = ratings.EloParams()) -> pd.DataFrame:
+          elo_params: ratings.EloParams = ratings.EloParams(), injuries: pd.DataFrame | None = None) -> pd.DataFrame:
     tl = team_long(games, teams)
     tf = team_features(tl)
-    rf = roster_features(games, players)
+    rf = roster_features(games, players, injuries=injuries)
     df = games.copy()
     for side in ("home", "away"):
         s = tf.merge(rf, on=["GAME_ID", "team_id"], how="left")

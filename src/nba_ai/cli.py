@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import data, espn, evaluate, features, models
+from . import data, espn, evaluate, features, injuries, models
 
 FEATURES = data.DATA_DIR / "features.parquet"
 PRED = data.DATA_DIR / "test_predictions.parquet"
@@ -34,7 +34,9 @@ def build_table(future: pd.DataFrame | None = None) -> pd.DataFrame:
     games = features.build_games(teams)
     if future is not None and len(future):
         games = features.append_future(games, future)
-    return features.build(games, teams, players)
+    inj_path = data.DATA_DIR / "injuries.parquet"
+    status = injuries.statuses(pd.read_parquet(inj_path), games, players) if inj_path.exists() else None
+    return features.build(games, teams, players, injuries=status)
 
 
 def cmd_train(_: argparse.Namespace) -> None:

@@ -10,6 +10,7 @@ dependencies = [
     "nba_api>=1.10",
     "numpy>=2.0",
     "pandas>=2.2",
+    "pdfplumber>=0.11.10",
     "pyarrow>=26.0.1",
     "requests>=2.34.2",
     "scikit-learn>=1.9.1",
