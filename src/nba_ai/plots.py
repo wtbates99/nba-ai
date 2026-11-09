@@ -37,13 +37,14 @@ def _dots(ax: Axes, y: np.ndarray, probs: dict[str, np.ndarray], title: str, sub
     ms = [metrics(y, probs[n]) for n in names]
     lls = [m["logloss"] for m in ms]
     pos = np.arange(len(names))[::-1]
+    left = min(lls) - 0.012
     for p, n, m in zip(pos, names, ms, strict=True):
-        ax.plot([0.58, m["logloss"]], [p, p], color=GRID, lw=2, zorder=1)
+        ax.plot([left, m["logloss"]], [p, p], color=GRID, lw=2, zorder=1)
         ax.scatter([m["logloss"]], [p], s=90, color=COLOR[n], edgecolor=SURFACE, linewidth=2, zorder=3)
         ax.text(m["logloss"] + 0.0015, p, f"{m['logloss']:.4f}  ·  {m['acc']:.1%} right",
                 va="center", fontsize=9, color=INK2)
     ax.set_yticks(pos, names)
-    ax.set_xlim(min(lls) - 0.012, max(lls) + 0.03)
+    ax.set_xlim(left, max(lls) + 0.03)
     ax.grid(axis="x", color=GRID, linewidth=0.8)
     ax.set_xlabel("log loss (lower is better)")
     ax.set_ylim(-0.6, len(names) - 0.4)

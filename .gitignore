@@ -3,4 +3,5 @@ __pycache__/
 .venv/
 .mypy_cache/
 *.png
+!report.png
 data/

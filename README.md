@@ -15,7 +15,29 @@ uv run pytest                           # leakage tests
 
 ## Results
 
-RESULTS_PLACEHOLDER
+![report](report.png)
+
+**Test season 2025-26** (1,225 games, scored once, never used for training or tuning):
+
+| model | log loss | accuracy |
+|---|---|---|
+| Elo (tuned) | 0.5964 | 69.2% |
+| model, day before (no lineup info) | 0.5835 | 69.0% |
+| **model, at tip-off** (knows which rotation players are active) | **0.5717** | **69.6%** |
+
+**Against the betting market** (the 974 test games with a DraftKings line): tip-off model
+0.5714, market 0.5722. That's a tie within noise. The day-before model (0.5860) trails the
+market. Feeding the market line to the model as an input didn't help: on 2017-23 the stack
+scored 0.6068 against 0.6054 for the market alone. The closing line already contains
+everything in a box score.
+
+**Walk-forward validation** (2021-22..2024-25, 4,915 games): ensemble 0.6025 at tip-off,
+0.6133 day before; Elo 0.6278. Every experiment is logged in `results.csv`.
+
+What moved the needle, in order: player availability weighted by adjusted plus-minus
+(-0.010 log loss), schedule/rest (-0.0025), the ensemble over a single logistic model (-0.0015).
+What didn't: LightGBM on its own (worse than logistic), weighting recent seasons, a
+plus-minus-based player model (-0.0003 for 13x the compute), adding the market as a feature.
 
 ## How it works
 
@@ -29,7 +51,7 @@ spreads for 2012-13..2022-23, moneylines from 2017-18, and DraftKings lines agai
 |---|---|
 | ratings | Elo (margin-of-victory, season carry-over, tuned), opponent-adjusted offense/defense (time-weighted ridge, refit daily) |
 | form | EWMAs at 5/15/40-game half-lives of net/off/def rating, pace, the four factors on both ends, 3-point rate |
-| players | adjusted plus-minus per player from game margins and box +/- (ridge toward a box-score prior, refit weekly), summed over the expected rotation |
+| players | adjusted plus-minus per player from game margins weighted by minutes (ridge toward a box-score prior, refit weekly), summed over the expected rotation |
 | availability | day-before: last game's rotation; at tip-off: which *rotation* players are actually active |
 | schedule | rest, back-to-backs, games in last 7 days, travel distance, altitude, league-wide home edge drift |
 | market | spread, vig-free moneyline probability, total |
